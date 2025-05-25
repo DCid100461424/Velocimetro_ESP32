@@ -1,0 +1,223 @@
+
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <Arduino.h>
+#include "BluetoothSerial.h"
+#include "BLE2902.h"
+
+// BLE UUIDs (must match Flutter app)
+// TODO: Volver a generarlos de nuevo de forma aleatoria? Mirar si hay algún estándar para los de conexión y notify
+//          eg: dc9a393d-bebf-4d11-8235-01878bbec7fe
+// TODO: Hacer que el SERVICE_UUID vaya en modo servidor GATT? Habría que ver que implicaría eso.
+#define SERVICE_UUID        "4fafc201-0000-459e-8fcc-c5c9c331914b" //TODO: Cambiarlo también en la app ("-0000-")
+#define WRITE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define NOTIFY_CHARACTERISTIC_UUID "cba1d466-344c-4be3-ab3f-189f80d751a2"
+#define AVG_SPEED_UUID "4fafc201-0001-459e-8fcc-c5c9c331914b"
+#define TOTAL_DISTANCE_UUID "4fafc201-0002-459e-8fcc-c5c9c331914b"
+#define TEMPERATURE_UUID "4fafc201-0003-459e-8fcc-c5c9c331914b"
+#define TOTAL_TIME_UUID "4fafc201-0004-459e-8fcc-c5c9c331914b"  //Mandamos esto siquiera?
+#define STOP_SIGNAL "STOP"
+#define MAX_DIAMETER 1023 // Para evitar números excesivamente grandes o inf
+
+
+// GPIO and variables
+const int SENSOR_PIN = 32;
+volatile unsigned long pulseCount = 0;
+float W_DIAMETER = 0.0;
+float wCircunference = 0.0;
+float totalDistance = 0.0;
+bool deviceConnected = false;
+bool dataActive = false;
+//unsigned long lastConnectTime = 0;
+unsigned long lastDisconnectTime = 0;
+unsigned long trainStartTime = 0;
+
+const unsigned long TIMEOUT = 300000; // 5 minutes
+bool inTraining = false;
+
+// BLE Objects
+BLEServer* pServer;
+BLECharacteristic* pWriteCharacteristic;
+BLECharacteristic* pNotifyCharacteristic;
+BLECharacteristic* pTemperatureCharacteristic;
+BLECharacteristic* pAvgSpeedCharacteristic;
+BLECharacteristic* pDistanceCharacteristic;
+BLECharacteristic pTimeCharacteristic(TOTAL_TIME_UUID);
+
+class ServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+        deviceConnected = true;
+        dataActive = false; // Wait for diameter
+        //lastConnectTime = millis();
+    }
+
+    void onDisconnect(BLEServer* pServer) {
+        deviceConnected = false;
+        lastDisconnectTime = millis();
+    }
+};
+
+class WriteCallback: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic* pCharacteristic) {
+        std::string value = pCharacteristic->getValue();
+        double convValue = atof(value.c_str());
+
+        // Si el valor no es un número, comprueba si es la señal de terminar. Si lo es, para el entrenamiento y resetea los valores. Después termina la función.
+        if(convValue == 0){
+            if(!value.compare(STOP_SIGNAL)){
+                dataActive = false;
+                pulseCount = 0;
+                W_DIAMETER = 0.0;
+                wCircunference = 0.0;
+                totalDistance = 0.0;
+            }
+            return;
+        }
+
+        if (convValue > 0 && convValue < MAX_DIAMETER) {
+            // Guardamos el diámetro que nos llega, convirtiendolo de cm a metros
+            W_DIAMETER = convValue /100.0;
+            // Calculamos la circunferencia ahora para no volver a hacerlo cada segundo
+            wCircunference = W_DIAMETER*PI; 
+            if (!dataActive){
+                trainStartTime = millis();
+                dataActive = true;
+            }
+        }
+    }
+};
+
+void IRAM_ATTR countPulse() {
+    pulseCount++;
+    totalDistance += wCircunference;
+}
+
+void setup() {
+    Serial.begin(9600);
+    
+    // Configure sensor input
+    pinMode(SENSOR_PIN, INPUT);
+    attachInterrupt(digitalPinToInterrupt(SENSOR_PIN), countPulse, RISING);
+
+    // BLE Setup
+    BLEDevice::init("ESP32-Speedometer");
+    pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new ServerCallbacks());
+
+    BLEService* pService = pServer->createService(SERVICE_UUID);
+
+    // Write characteristic for diameter
+    pWriteCharacteristic = pService->createCharacteristic(
+        WRITE_CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_WRITE
+    );
+    pWriteCharacteristic->setCallbacks(new WriteCallback());
+
+    // Notify characteristic for speed
+    pNotifyCharacteristic = pService->createCharacteristic(
+        NOTIFY_CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    pNotifyCharacteristic->addDescriptor(new BLE2902());
+
+    
+    pTemperatureCharacteristic = pService -> createCharacteristic(
+        TEMPERATURE_UUID,
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    pAvgSpeedCharacteristic = pService -> createCharacteristic(
+        AVG_SPEED_UUID,
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    pDistanceCharacteristic = pService -> createCharacteristic(
+        TOTAL_DISTANCE_UUID,
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    
+
+    // TODO: Poner las characteristics de los otros. Probablemente pueda hacer de primeras que sean NOTIFY y ya.
+    // Podemos crearlos en la declaración y después añadirlos, como en este thread: https://forum.arduino.cc/t/ble-very-weak-signal/631751/12
+
+    pService->start();
+    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);
+    BLEDevice::startAdvertising();
+}
+
+void loop() {
+    static unsigned long lastSend = 0;
+    static unsigned long lastPulse = 0;
+    float speed = 0.0;
+    float lastSpeed = 0.0;
+    float avgSpeed = 0.0;
+    char speedStr[8];
+    char avgSpeedStr[8];
+    char distanceStr[8];
+    
+    
+    if (dataActive && deviceConnected) {
+        // IMPORTANTE: elcódigo tiene en cuenta el cálculo una vez por segundo, si se modifica la frecuencia de actualización
+        // que está abajo, hay que modificar el código.
+        if (millis() - lastSend >= 1000) { // Update every second
+            //TODO: TEMPERATURE calc y envío
+
+            if(inTraining){
+                // Calculate speed
+                unsigned long currentPulses = pulseCount;
+                //float rpm = (currentPulses - lastPulse) * (60.0); // Pulses per minute.
+                //rpm (rev/min)= (currentPulses - lastPulse) (rev) /1 (s) * 60.0 (s/min);   // Pulses per minute. Se calculan los pulsos (revoluciones) que ha habido en un segundo. Como ambas variables de pulso están en ms, hay que pasarlos a s (/1000), y después a min (*60)
+                float rpm = ((currentPulses - lastPulse) * 60.0); // Versión optimizada
+                //float speed = (rpm * wCircunference * 3.6) / 60.0; // km/h
+                //speed (km/h) = (rpm (rev/min) * wCircunference (m/rev) ) * 60.0 (min/h) / 1000 (m/km);   // km/h
+                float speed = (rpm * wCircunference)*0.06; // Versión optimizada (sería más optimizado usar una variable de circunferencia ya multiplicada)
+                
+                //TODO: ¿Que la velocidad que envíe sea la media entre esta velocidad y la anterior? Así hay menos picos, y si tiene 0 en dos segundos seguidos estaría parada ( (0+0)/2 )
+                //avgSpeed (km/h) = totalDistance (m) / ((millis-trainStartTime) (ms) / (1000 (ms/s) * 3600 (s/h) ))
+                avgSpeed = totalDistance/((millis()-trainStartTime)/3600000.0);
+
+
+                // Send via BLE
+                dtostrf( (speed+lastSpeed)/2 , 1, 1, speedStr);
+                //dtostrf(speed, 1, 1, speedStr);
+                pNotifyCharacteristic->setValue(speedStr);
+                pNotifyCharacteristic->notify();
+
+                dtostrf(avgSpeed , 1, 1, avgSpeedStr);
+                pAvgSpeedCharacteristic->setValue(avgSpeedStr);
+                pAvgSpeedCharacteristic->notify();
+
+                //dtostrf(totalDistance , 1, 1, distanceStr);
+                //pDistanceCharacteristic->setValue(distanceStr);
+                pDistanceCharacteristic->setValue(totalDistance);
+                pDistanceCharacteristic->notify();
+                
+                lastPulse = currentPulses;
+                lastSend = millis();
+                lastSpeed = speed;
+                //lastSpeed = speed;
+
+                //debug print
+                Serial.println(pulseCount);
+                Serial.printf("\nSpeed: %.2f", speed);
+                Serial.println("");
+            }
+
+            delay(200);
+        }
+
+    }
+    
+    // Handle timeout
+    if (!deviceConnected && dataActive && (millis() - lastDisconnectTime >= TIMEOUT)) {
+        dataActive = false;
+        W_DIAMETER = 0.0;
+        wCircunference = 0.0;
+        totalDistance = 0.0;
+        pulseCount = 0;
+        lastPulse = 0;
+    }
+
+}

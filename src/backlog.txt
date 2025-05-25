@@ -1,0 +1,305 @@
+// Código de MIT Lab
+
+/*
+  Based on Neil Kolban example for IDF: https://github.com/nkolban/esp32-snippets/blob/master/cpp_utils/tests/BLE%20Tests/SampleNotify.cpp
+  Ported to Arduino ESP32 by Evandro Copercini
+  updated by chegewara and MoThunderz
+*/
+#include <Arduino.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+BLEDescriptor *pDescr;
+BLE2902 *pBLE2902;
+
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+uint32_t value = 0;
+
+// See the following for generating UUIDs:
+// https://www.uuidgenerator.net/
+
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+    }
+};
+
+void setup() {
+  Serial.begin(115200);
+
+  // Create the BLE Device
+  BLEDevice::init("ESP32");
+
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );                   
+
+  // Create a BLE Descriptor
+  
+  pDescr = new BLEDescriptor((uint16_t)0x2901);
+  pDescr->setValue("A very interesting variable");
+  pCharacteristic->addDescriptor(pDescr);
+  
+  pBLE2902 = new BLE2902();
+  pBLE2902->setNotifications(true);
+  pCharacteristic->addDescriptor(pBLE2902);
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(false);
+  pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
+  BLEDevice::startAdvertising();
+  Serial.println("Waiting a client connection to notify...");
+}
+
+void loop() {
+    // notify changed value
+    if (deviceConnected) {
+        pCharacteristic->setValue(value);
+        pCharacteristic->notify();
+        value++;
+        delay(1000);
+    }
+    // disconnecting
+    if (!deviceConnected && oldDeviceConnected) {
+        delay(500); // give the bluetooth stack the chance to get things ready
+        pServer->startAdvertising(); // restart advertising
+        Serial.println("start advertising");
+        oldDeviceConnected = deviceConnected;
+    }
+    // connecting
+    if (deviceConnected && !oldDeviceConnected) {
+        // do stuff here on connecting
+        oldDeviceConnected = deviceConnected;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+/** 
+#include <Arduino.h>
+
+const int hallPin = 32;
+int state = 0;    
+
+void setup() 
+{
+  Serial.begin(9600);
+  pinMode(hallPin,INPUT);
+}
+
+void loop(){
+  state = digitalRead(hallPin);
+  int val = hallRead();
+  //if (state==LOW){
+  //}
+  Serial.println(state); 
+  Serial.println(val); 
+  Serial.println("");
+  delay(200);
+}
+*/
+
+
+
+
+
+
+
+
+
+
+/**
+#include <Arduino.h>
+#include "BluetoothSerial.h"
+
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+BluetoothSerial SerialBT;
+
+void setup() {
+  Serial.begin(9600);
+  SerialBT.begin("ESP32test"); //Bluetooth device name
+  Serial.println("The device started, now you can pair it with bluetooth!");
+}
+
+void loop() {
+  //Si escribes algo en la consola, lo manda a la app
+  if (Serial.available()) {
+    SerialBT.write(Serial.read());
+  }
+  //Si escribes algo en la app, lo manda a la consola
+  if (SerialBT.available()) {
+    Serial.write(SerialBT.read());
+  }
+  delay(20);
+}
+*/
+
+
+
+
+/**
+// the setup function runs once when you press reset or power the board
+void setup() {
+  // initialize digital pin GPIO18 as an output.
+  pinMode(18, OUTPUT);
+}
+
+// the loop function runs over and over again forever
+void loop() {
+  digitalWrite(18, HIGH); // turn the LED on
+  delay(500);             // wait for 500 milliseconds
+  digitalWrite(18, LOW);  // turn the LED off
+  delay(500);             // wait for 500 milliseconds
+}*/
+
+
+
+
+
+
+
+
+
+
+
+*************************************************************
+
+
+/**
+
+// Intento de lectura de Hall externo (fallido)
+const int HALLPin = 15;
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  pinMode(HALLPin, INPUT);
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  Serial.println(digitalRead(HALLPin)); 
+  delay(1000);
+}
+
+
+****************************************
+// Helloworld
+
+void setup() {
+  Serial.begin(9600); // Initialize serial communication
+}
+void loop() {
+  Serial.println("Hello, World!"); // Print "Hello, World!" to the Serial Monitor
+  delay(1000); // Wait for 1 second
+}
+
+
+****************************************
+
+
+const int HALLPin = 5;
+const int LEDPin = 13;
+
+void setup() {
+  pinMode(LEDPin, OUTPUT);
+  pinMode(HALLPin, INPUT);
+}
+
+void loop() {
+  if(digitalRead(HALLPin)==HIGH)
+  {
+    digitalWrite(LEDPin, HIGH);   
+  }
+  else
+  {
+    digitalWrite(LEDPin, LOW);
+  }
+}
+
+
+***********************************************
+
+//Leer Hall integrado
+
+void setup() 
+{
+  Serial.begin(9600);
+}
+
+void loop() 
+{
+  // read hall effect sensor value
+  int val = hallRead();
+  
+  // print the results to the serial monitor
+  Serial.println(val); 
+  delay(1000);
+}
+
+
+
+
+***********************************************
+
+#include <Arduino.h>
+
+
+#define LED 2
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  digitalWrite(LED, HIGH);
+  Serial.println("LED is on");
+  delay(2000);
+  digitalWrite(LED, LOW);
+  Serial.println("LED is off");
+  delay(2000);
+}
+
+
+**/
