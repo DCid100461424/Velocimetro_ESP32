@@ -48,7 +48,10 @@ BLECharacteristic pTimeCharacteristic(TOTAL_TIME_UUID);
 class ServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
-        dataActive = false; // Wait for diameter
+        //dataActive = false; // Wait for diameter
+
+        dataActive = true;//TODO: REMOVE TEST LINE
+        inTraining = true;//TODO: REMOVE TEST LINE
         //lastConnectTime = millis();
     }
 
@@ -62,6 +65,8 @@ class WriteCallback: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic* pCharacteristic) {
         std::string value = pCharacteristic->getValue();
         double convValue = atof(value.c_str());
+        Serial.printf("\nDiameter: %.2f", convValue);
+        Serial.println("");
 
         // Si el valor no es un número, comprueba si es la señal de terminar. Si lo es, para el entrenamiento y resetea los valores. Después termina la función.
         if(convValue == 0){
@@ -90,7 +95,6 @@ class WriteCallback: public BLECharacteristicCallbacks {
 
 void IRAM_ATTR countPulse() {
     pulseCount++;
-    totalDistance += wCircunference;
 }
 
 void setup() {
@@ -181,17 +185,19 @@ void loop() {
 
                 // Send via BLE
                 dtostrf( (speed+lastSpeed)/2 , 1, 1, speedStr);
+
+                dtostrf(currentPulses , 1, 1, avgSpeedStr);//TODO: BORRAR LINEA TEST
                 //dtostrf(speed, 1, 1, speedStr);
-                pNotifyCharacteristic->setValue(speedStr);
+                pNotifyCharacteristic->setValue(avgSpeedStr);
                 pNotifyCharacteristic->notify();
 
                 dtostrf(avgSpeed , 1, 1, avgSpeedStr);
-                pAvgSpeedCharacteristic->setValue(avgSpeedStr);
+                pAvgSpeedCharacteristic->setValue("60.0");
                 pAvgSpeedCharacteristic->notify();
 
                 //dtostrf(totalDistance , 1, 1, distanceStr);
                 //pDistanceCharacteristic->setValue(distanceStr);
-                pDistanceCharacteristic->setValue(totalDistance);
+                pDistanceCharacteristic->setValue("120.0");
                 pDistanceCharacteristic->notify();
                 
                 lastPulse = currentPulses;
