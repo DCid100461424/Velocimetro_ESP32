@@ -1,10 +1,12 @@
-
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <Arduino.h>
+#include <OneWire.h> //Para el sensor de temperatura
+#include <DallasTemperature.h> //Para el sensor de temperatura
 #include "BluetoothSerial.h"
 #include "BLE2902.h"
+
 
 // BLE UUIDs (must match Flutter app)
 // TODO: Volver a generarlos de nuevo de forma aleatoria? Mirar si hay algún estándar para los de conexión y notify
@@ -23,9 +25,10 @@
 
 // GPIO and variables
 const int SENSOR_PIN = 32;
+const int TEMP_SENSOR_PIN = 25;
 volatile unsigned long pulseCount = 0;
 float W_DIAMETER = 0.0;
-float wCircunference = 0.0;
+float wCircunferenceKm = 0.0;
 float totalDistance = 0.0;
 bool deviceConnected = false;
 bool dataActive = false;
@@ -35,6 +38,10 @@ unsigned long trainStartTime = 0;
 
 const unsigned long TIMEOUT = 300000; // 5 minutes
 bool inTraining = false;
+
+// Objetos temperatura
+OneWire oneWire(TEMP_SENSOR_PIN);
+DallasTemperature DS18B20(&oneWire);
 
 // BLE Objects
 BLEServer* pServer;
@@ -74,7 +81,7 @@ class WriteCallback: public BLECharacteristicCallbacks {
                 dataActive = false;
                 pulseCount = 0;
                 W_DIAMETER = 0.0;
-                wCircunference = 0.0;
+                wCircunferenceKm = 0.0;
                 totalDistance = 0.0;
             }
             return;
@@ -83,8 +90,8 @@ class WriteCallback: public BLECharacteristicCallbacks {
         if (convValue > 0 && convValue < MAX_DIAMETER) {
             // Guardamos el diámetro que nos llega, convirtiendolo de cm a metros
             W_DIAMETER = convValue /100.0;
-            // Calculamos la circunferencia ahora para no volver a hacerlo cada segundo
-            wCircunference = W_DIAMETER*PI; 
+            // Calculamos la circunferencia en km ahora para no volver a hacerlo cada segundo
+            wCircunferenceKm = W_DIAMETER*PI*0.001; 
             if (!dataActive){
                 trainStartTime = millis();
                 dataActive = true;
@@ -99,6 +106,7 @@ void IRAM_ATTR countPulse() {
 
 void setup() {
     Serial.begin(9600);
+    DS18B20.begin();    // initialize the DS18B20 sensor
     
     // Configure sensor input
     pinMode(SENSOR_PIN, INPUT);
@@ -160,24 +168,29 @@ void loop() {
     char speedStr[8];
     char avgSpeedStr[8];
     char distanceStr[8];
+    char temperatureStr[8];
     
     
     if (dataActive && deviceConnected) {
         // IMPORTANTE: elcódigo tiene en cuenta el cálculo una vez por segundo, si se modifica la frecuencia de actualización
         // que está abajo, hay que modificar el código.
         if (millis() - lastSend >= 1000) { // Update every second
-            //TODO: TEMPERATURE calc y envío
+            DS18B20.requestTemperatures();
+            dtostrf(DS18B20.getTempCByIndex(0), 1, 1, temperatureStr);
+            pTemperatureCharacteristic->setValue(temperatureStr);
+            pTemperatureCharacteristic->notify();
 
             if(inTraining){
                 // Calculate speed
                 unsigned long currentPulses = pulseCount;
                 //float rpm = (currentPulses - lastPulse) * (60.0); // Pulses per minute.
                 //rpm (rev/min)= (currentPulses - lastPulse) (rev) /1 (s) * 60.0 (s/min);   // Pulses per minute. Se calculan los pulsos (revoluciones) que ha habido en un segundo. Como ambas variables de pulso están en ms, hay que pasarlos a s (/1000), y después a min (*60)
-                float rpm = ((currentPulses - lastPulse) * 60.0); // Versión optimizada
-                //float speed = (rpm * wCircunference * 3.6) / 60.0; // km/h
-                //speed (km/h) = (rpm (rev/min) * wCircunference (m/rev) ) * 60.0 (min/h) / 1000 (m/km);   // km/h
-                float speed = (rpm * wCircunference)*0.06; // Versión optimizada (sería más optimizado usar una variable de circunferencia ya multiplicada)
+                float rpm = ((currentPulses - lastPulse) * 60.0); // Versión algo optimizada
+                //float speed = (rpm * wCircunferenceKm * 3.6) / 60.0; // km/h
+                //speed (km/h) = (rpm (rev/min) * wCircunferenceKm (m/rev) ) * 60.0 (min/h) / 1000 (m/km);   // km/h
+                float speed = (rpm * wCircunferenceKm)*60.0; // Versión optimizada (sería más optimizado usar una variable de circunferencia ya multiplicada, o juntarla con el cálculo de rpm)
                 
+                totalDistance = wCircunferenceKm * currentPulses;
                 //TODO: ¿Que la velocidad que envíe sea la media entre esta velocidad y la anterior? Así hay menos picos, y si tiene 0 en dos segundos seguidos estaría parada ( (0+0)/2 )
                 //avgSpeed (km/h) = totalDistance (m) / ((millis-trainStartTime) (ms) / (1000 (ms/s) * 3600 (s/h) ))
                 avgSpeed = totalDistance/((millis()-trainStartTime)/3600000.0);
@@ -220,7 +233,7 @@ void loop() {
     if (!deviceConnected && dataActive && (millis() - lastDisconnectTime >= TIMEOUT)) {
         dataActive = false;
         W_DIAMETER = 0.0;
-        wCircunference = 0.0;
+        wCircunferenceKm = 0.0;
         totalDistance = 0.0;
         pulseCount = 0;
         lastPulse = 0;
