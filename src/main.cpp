@@ -31,7 +31,6 @@ float W_DIAMETER = 0.0;
 float wCircunferenceKm = 0.0;
 float totalDistance = 0.0;
 bool deviceConnected = false;
-bool dataActive = false;
 //unsigned long lastConnectTime = 0;
 unsigned long lastDisconnectTime = 0;
 unsigned long trainStartTime = 0;
@@ -55,16 +54,15 @@ BLECharacteristic pTimeCharacteristic(TOTAL_TIME_UUID);
 class ServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
-        //dataActive = false; // Wait for diameter
-
-        dataActive = true;//TODO: REMOVE TEST LINE
-        inTraining = true;//TODO: REMOVE TEST LINE
+        
         //lastConnectTime = millis();
     }
 
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
         lastDisconnectTime = millis();
+        inTraining = false;
+        pulseCount = 0;
     }
 };
 
@@ -78,7 +76,7 @@ class WriteCallback: public BLECharacteristicCallbacks {
         // Si el valor no es un número, comprueba si es la señal de terminar. Si lo es, para el entrenamiento y resetea los valores. Después termina la función.
         if(convValue == 0){
             if(!value.compare(STOP_SIGNAL)){
-                dataActive = false;
+                inTraining = false;
                 pulseCount = 0;
                 W_DIAMETER = 0.0;
                 wCircunferenceKm = 0.0;
@@ -92,9 +90,9 @@ class WriteCallback: public BLECharacteristicCallbacks {
             W_DIAMETER = convValue /100.0;
             // Calculamos la circunferencia en km ahora para no volver a hacerlo cada segundo
             wCircunferenceKm = W_DIAMETER*PI*0.001; 
-            if (!dataActive){
+            if (!inTraining){
                 trainStartTime = millis();
-                dataActive = true;
+                inTraining = true;
             }
         }
     }
@@ -171,7 +169,7 @@ void loop() {
     char temperatureStr[8];
     
     
-    if (dataActive && deviceConnected) {
+    if (deviceConnected) {
         // IMPORTANTE: elcódigo tiene en cuenta el cálculo una vez por segundo, si se modifica la frecuencia de actualización
         // que está abajo, hay que modificar el código.
         if (millis() - lastSend >= 1000) { // Update every second
@@ -230,8 +228,8 @@ void loop() {
     }
     
     // Handle timeout
-    if (!deviceConnected && dataActive && (millis() - lastDisconnectTime >= TIMEOUT)) {
-        dataActive = false;
+    if (!deviceConnected && (millis() - lastDisconnectTime >= TIMEOUT)) {
+        inTraining = false;
         W_DIAMETER = 0.0;
         wCircunferenceKm = 0.0;
         totalDistance = 0.0;
