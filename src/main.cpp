@@ -90,6 +90,7 @@ class WriteCallback: public BLECharacteristicCallbacks {
             W_DIAMETER = convValue /100.0;
             // Calculamos la circunferencia en km ahora para no volver a hacerlo cada segundo
             wCircunferenceKm = W_DIAMETER*PI*0.001; 
+            pulseCount = 0;
             if (!inTraining){
                 trainStartTime = millis();
                 inTraining = true;
@@ -191,38 +192,36 @@ void loop() {
                 totalDistance = wCircunferenceKm * currentPulses;
                 //TODO: ¿Que la velocidad que envíe sea la media entre esta velocidad y la anterior? Así hay menos picos, y si tiene 0 en dos segundos seguidos estaría parada ( (0+0)/2 )
                 //avgSpeed (km/h) = totalDistance (m) / ((millis-trainStartTime) (ms) / (1000 (ms/s) * 3600 (s/h) ))
-                avgSpeed = totalDistance/((millis()-trainStartTime)/3600000.0);
+                avgSpeed = totalDistance/ ((millis()-trainStartTime)/3600000.0);
 
 
                 // Send via BLE
                 dtostrf( (speed+lastSpeed)/2 , 1, 1, speedStr);
-
-                dtostrf(currentPulses , 1, 1, avgSpeedStr);//TODO: BORRAR LINEA TEST
                 //dtostrf(speed, 1, 1, speedStr);
-                pNotifyCharacteristic->setValue(avgSpeedStr);
+                pNotifyCharacteristic->setValue(speedStr);
                 pNotifyCharacteristic->notify();
 
                 dtostrf(avgSpeed , 1, 1, avgSpeedStr);
-                pAvgSpeedCharacteristic->setValue("60.0");
+                pAvgSpeedCharacteristic->setValue(avgSpeedStr);
                 pAvgSpeedCharacteristic->notify();
 
-                //dtostrf(totalDistance , 1, 1, distanceStr);
-                //pDistanceCharacteristic->setValue(distanceStr);
-                pDistanceCharacteristic->setValue("120.0");
+                dtostrf(totalDistance , 1, 1, distanceStr);
+                pDistanceCharacteristic->setValue(distanceStr);
+                //pDistanceCharacteristic->setValue("120.0");
                 pDistanceCharacteristic->notify();
                 
                 lastPulse = currentPulses;
                 lastSend = millis();
                 lastSpeed = speed;
-                //lastSpeed = speed;
 
+                /**
                 //debug print
-                Serial.println(pulseCount);
-                Serial.printf("\nSpeed: %.2f", speed);
-                Serial.println("");
+                Serial.printf("\nDistance: %.2f, %s", totalDistance, distanceStr);
+                Serial.printf("\nAvgSpeed: %.2f, %s\n", avgSpeed, avgSpeedStr);
+                 */
             }
 
-            delay(200);
+            delay(180);
         }
 
     }
